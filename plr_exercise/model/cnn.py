@@ -3,9 +3,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 class Net(nn.Module):
-    """Defines a convolutional neural network (CNN) for image classification.
-    """
+    """Defines a convolutional neural network (CNN) for image classification."""
+
     def __init__(self):
         """Initializes the CNN layers.
 

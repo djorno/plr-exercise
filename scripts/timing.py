@@ -9,7 +9,6 @@ import time
 from plr_exercise.model.cnn import Net
 
 
-
 def main():
     """Parses arguments, sets up the model and device, and performs timing experiments.
 
