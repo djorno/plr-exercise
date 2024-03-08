@@ -11,7 +11,19 @@ import optuna
 
 wandb.login()
 
-def train(args, model, device, train_loader, optimizer, epoch, trial = None):
+
+def train(args, model, device, train_loader, optimizer, epoch, trial=None):
+    """Trains the model for a single epoch. Logs training loss to WandB.
+
+    Args:
+        args (argparse.Namespace): Parsed command-line arguments.
+        model (torch.nn.Module): The PyTorch model to train.
+        device (torch.device): The device (CPU or GPU) to use for training.
+        train_loader (torch.utils.data.DataLoader): Dataloader for training data.
+        optimizer (torch.optim.Optimizer): The optimizer to use.
+        epoch (int): The current epoch number.
+        trial (optuna.trial.Trial, optional): An Optuna trial object, if used for hyperparameter tuning.
+    """
     model.train()
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
@@ -21,24 +33,35 @@ def train(args, model, device, train_loader, optimizer, epoch, trial = None):
         loss.backward()
         optimizer.step()
         if batch_idx % args.log_interval == 0:
-              print(
-                    "Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}".format(
-                      epoch,
-                      batch_idx * len(data),
-                      len(train_loader.dataset),
-                      100.0 * batch_idx / len(train_loader),
-                      loss.item(),
-                    )
-              )
-              # WandB – log the current value of the training loss
-              wandb.log({"training_loss": loss.item()})
-              if trial is not None:
-                    trial.report(loss.item(), epoch)  # Report intermediate values to Optuna
-              if args.dry_run:
-                    break
+            print(
+                "Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}".format(
+                    epoch,
+                    batch_idx * len(data),
+                    len(train_loader.dataset),
+                    100.0 * batch_idx / len(train_loader),
+                    loss.item(),
+                )
+            )
+            # WandB – log the current value of the training loss
+            wandb.log({"training_loss": loss.item()})
+            if trial is not None:
+                trial.report(loss.item(), epoch)  # Report intermediate values to Optuna
+            if args.dry_run:
+                break
 
 
 def test(model, device, test_loader, epoch):
+    """Evaluates the model on the test set.
+
+    Args:
+        model (torch.nn.Module): The PyTorch model to evaluate.
+        device (torch.device): The device (CPU or GPU) to use for evaluation.
+        test_loader (torch.utils.data.DataLoader): Dataloader for test data.
+        epoch (int): The current epoch number (for logging purposes).
+
+    Returns:
+        float: The accuracy on the test set.
+    """
     model.eval()
     test_loss = 0
     correct = 0
@@ -65,7 +88,11 @@ def test(model, device, test_loader, epoch):
     )
     return accuracy  # Return the accuracy for Optuna
 
+
 def main():
+    """Parses command-line arguments, initializes logging, loads data, performs
+    hyperparameter optimization with Optuna, and trains the model with the best hyperparameters.
+    """
     # Training settings
     parser = argparse.ArgumentParser(description="PyTorch MNIST Example")
     parser.add_argument(
@@ -91,19 +118,22 @@ def main():
     args = parser.parse_args()
 
     # WandB – Initialize a new run
-    run = wandb.init(project="plr-exercise", dir="../results/",
-                     config={
-                         "learning_rate": parser.parse_args().lr,
-                         "architecture": "CNN",
-                         "dataset": "MNIST",
-                         "epochs": parser.parse_args().epochs,
-                         "batch_size": args.batch_size,
-                     })
+    run = wandb.init(
+        project="plr-exercise",
+        dir="../results/",
+        config={
+            "learning_rate": parser.parse_args().lr,
+            "architecture": "CNN",
+            "dataset": "MNIST",
+            "epochs": parser.parse_args().epochs,
+            "batch_size": args.batch_size,
+        },
+    )
     # WandB – log code as artifact
     code_artifact = wandb.Artifact("project-code", type="code")
     code_artifact.add_dir("./")
     run.log_artifact(code_artifact)
-    artifact = run.use_artifact('gtonetti/plr-exercise/project-code:latest', type='code')
+    artifact = run.use_artifact("gtonetti/plr-exercise/project-code:latest", type="code")
     artifact_dir = artifact.download("../results/artifact/")
 
     use_cuda = not args.no_cuda and torch.cuda.is_available()
@@ -114,7 +144,6 @@ def main():
         device = torch.device("cuda")
     else:
         device = torch.device("cpu")
-
 
     train_kwargs = {"batch_size": args.batch_size}
     test_kwargs = {"batch_size": args.test_batch_size}
@@ -131,6 +160,14 @@ def main():
 
     # Optuna
     def objective(trial):
+        """Defines the objective function for Optuna's hyperparameter search.
+
+        Args:
+            trial (optuna.trial.Trial): An Optuna trial object.
+
+        Returns:
+            float: The final test accuracy achieved with the suggested hyperparameters.
+        """
         # Hyperparamters to be tuned by Optuna
         lr = trial.suggest_float("lr", 1e-5, 1e-1, log=True)
         batch_size = trial.suggest_categorical("batch_size", [32, 64, 128])
@@ -158,6 +195,7 @@ def main():
         accuracy = test(model, device, test_loader, epoch)
 
         return accuracy
+
     study = optuna.create_study(direction="maximize")  # Maximize test accuracy
     study.optimize(objective, n_trials=10)
 
@@ -178,6 +216,7 @@ def main():
 
     if args.save_model:
         torch.save(model.state_dict(), "mnist_cnn.pt")
+
 
 if __name__ == "__main__":
     main()
