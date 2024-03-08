@@ -6,6 +6,9 @@ import torch.optim as optim
 from torchvision import datasets, transforms
 from torch.optim.lr_scheduler import StepLR
 from plr_exercise.model.cnn import Net
+import wandb
+
+wandb.login()
 
 
 
@@ -30,6 +33,8 @@ def train(args, model, device, train_loader, optimizer, epoch):
                     loss.item(),
                 )
             )
+            # WandB – log the current value of the training loss
+            wandb.log({"training_loss": loss.item()})
             if args.dry_run:
                 break
 
@@ -49,6 +54,8 @@ def test(model, device, test_loader, epoch):
             correct += pred.eq(target.view_as(pred)).sum().item()
 
     test_loss /= len(test_loader.dataset)
+    # WandB – log the current value of the training loss
+    wandb.log({"test_loss": test_loss})
 
     print(
         "\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n".format(
@@ -81,6 +88,23 @@ def main():
     )
     parser.add_argument("--save-model", action="store_true", default=False, help="For Saving the current Model")
     args = parser.parse_args()
+
+    # WandB – Initialize a new run
+    run = wandb.init(project="plr-exercise", dir="../results/",
+                     config={
+                         "learning_rate": parser.parse_args().lr,
+                         "architecture": "CNN",
+                         "dataset": "MNIST",
+                         "epochs": parser.parse_args().epochs,
+                         "batch_size": 64,
+                     })
+    # WandB – log code as artifact
+    code_artifact = wandb.Artifact("project-code", type="code")
+    code_artifact.add_dir("./")
+    run.log_artifact(code_artifact)
+    artifact = run.use_artifact('gtonetti/plr-exercise/project-code:latest', type='code')
+    artifact_dir = artifact.download("../results/artifact/")
+
     use_cuda = not args.no_cuda and torch.cuda.is_available()
 
     torch.manual_seed(args.seed)
@@ -114,7 +138,6 @@ def main():
 
     if args.save_model:
         torch.save(model.state_dict(), "mnist_cnn.pt")
-
 
 if __name__ == "__main__":
     main()
