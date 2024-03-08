@@ -7,16 +7,13 @@ from torchvision import datasets, transforms
 from torch.optim.lr_scheduler import StepLR
 from plr_exercise.model.cnn import Net
 import wandb
+import optuna
 
 wandb.login()
 
-
-
-
-def train(args, model, device, train_loader, optimizer, epoch):
+def train(args, model, device, train_loader, optimizer, epoch, trial = None):
     model.train()
     for batch_idx, (data, target) in enumerate(train_loader):
-
         data, target = data.to(device), target.to(device)
         optimizer.zero_grad()
         output = model(data)
@@ -24,19 +21,21 @@ def train(args, model, device, train_loader, optimizer, epoch):
         loss.backward()
         optimizer.step()
         if batch_idx % args.log_interval == 0:
-            print(
-                "Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}".format(
-                    epoch,
-                    batch_idx * len(data),
-                    len(train_loader.dataset),
-                    100.0 * batch_idx / len(train_loader),
-                    loss.item(),
-                )
-            )
-            # WandB – log the current value of the training loss
-            wandb.log({"training_loss": loss.item()})
-            if args.dry_run:
-                break
+              print(
+                    "Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}".format(
+                      epoch,
+                      batch_idx * len(data),
+                      len(train_loader.dataset),
+                      100.0 * batch_idx / len(train_loader),
+                      loss.item(),
+                    )
+              )
+              # WandB – log the current value of the training loss
+              wandb.log({"training_loss": loss.item()})
+              if trial is not None:
+                    trial.report(loss.item(), epoch)  # Report intermediate values to Optuna
+              if args.dry_run:
+                    break
 
 
 def test(model, device, test_loader, epoch):
@@ -57,12 +56,14 @@ def test(model, device, test_loader, epoch):
     # WandB – log the current value of the training loss
     wandb.log({"test_loss": test_loss})
 
+    accuracy = 100.0 * correct / len(test_loader.dataset)
+
     print(
         "\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n".format(
-            test_loss, correct, len(test_loader.dataset), 100.0 * correct / len(test_loader.dataset)
+            test_loss, correct, len(test_loader.dataset), accuracy
         )
     )
-
+    return accuracy  # Return the accuracy for Optuna
 
 def main():
     # Training settings
@@ -96,7 +97,7 @@ def main():
                          "architecture": "CNN",
                          "dataset": "MNIST",
                          "epochs": parser.parse_args().epochs,
-                         "batch_size": 64,
+                         "batch_size": args.batch_size,
                      })
     # WandB – log code as artifact
     code_artifact = wandb.Artifact("project-code", type="code")
@@ -114,6 +115,7 @@ def main():
     else:
         device = torch.device("cpu")
 
+
     train_kwargs = {"batch_size": args.batch_size}
     test_kwargs = {"batch_size": args.test_batch_size}
     if use_cuda:
@@ -127,10 +129,48 @@ def main():
     train_loader = torch.utils.data.DataLoader(dataset1, **train_kwargs)
     test_loader = torch.utils.data.DataLoader(dataset2, **test_kwargs)
 
-    model = Net().to(device)
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    # Optuna
+    def objective(trial):
+        # Hyperparamters to be tuned by Optuna
+        lr = trial.suggest_float("lr", 1e-5, 1e-1, log=True)
+        batch_size = trial.suggest_categorical("batch_size", [32, 64, 128])
+        momentum = trial.suggest_float("momentum", 0.0, 0.99)
+        gamma = trial.suggest_float("gamma", 0.1, 0.99)
 
+        # Integrate with existing ArgumentParser
+        args.lr = lr
+        args.batch_size = batch_size
+        args.momentum = momentum
+        args.gamma = gamma
+
+        # Create model and optimizer with Optuna's values
+        model = Net().to(device)
+        optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
+        scheduler = StepLR(optimizer, step_size=1, gamma=args.gamma)
+
+        # Training and Evaluation Loop
+        for epoch in range(args.epochs):
+            train(args, model, device, train_loader, optimizer, epoch, trial)
+            test(model, device, test_loader, epoch)
+            scheduler.step()  # Assuming you have a learning rate scheduler
+
+        # Fetch and return the final accuracy
+        accuracy = test(model, device, test_loader, epoch)
+
+        return accuracy
+    study = optuna.create_study(direction="maximize")  # Maximize test accuracy
+    study.optimize(objective, n_trials=10)
+
+    best_params = study.best_params
+    print("Best params:", best_params)
+    args.lr = best_params["lr"]
+    args.batch_size = best_params["batch_size"]
+    args.momentum = best_params["momentum"]
+    args.gamma = best_params["gamma"]
+    model = Net().to(device)
+    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
     scheduler = StepLR(optimizer, step_size=1, gamma=args.gamma)
+
     for epoch in range(args.epochs):
         train(args, model, device, train_loader, optimizer, epoch)
         test(model, device, test_loader, epoch)
