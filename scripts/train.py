@@ -13,7 +13,7 @@ wandb.login()
 
 
 def train(args, model, device, train_loader, optimizer, epoch, trial=None):
-    """Trains the model for a single epoch.
+    """Trains the model for a single epoch. Logs training loss to WandB.
 
     Args:
         args (argparse.Namespace): Parsed command-line arguments.
